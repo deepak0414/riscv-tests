@@ -475,6 +475,14 @@ class CouldNotFetch(Exception):
         self.regname = regname
         self.explanation = explanation
 
+class CouldNotReadRegisters(Exception):
+    def __init__(self, explanation):
+        Exception.__init__(self)
+        self.explanation = explanation
+
+class NoRegisters(Exception):
+    pass
+
 class NoSymbol(Exception):
     def __init__(self, symbol):
         Exception.__init__(self)
@@ -482,6 +490,10 @@ class NoSymbol(Exception):
 
     def __repr__(self):
         return f"NoSymbol({self.symbol!r})"
+
+class UnknownThread(Exception):
+    def __init__(self, explanation):
+        Exception.__init__(self, explanation)
 
 Thread = collections.namedtuple('Thread', ('id', 'description', 'target_id',
     'name', 'frame'))
@@ -503,10 +515,14 @@ def tokenize(text):
                 (r"<repeats (\d+) times>", lambda m: Repeat(int(m.group(1)))),
                 (r"Could not fetch register \"(\w+)\"; (.*)$",
                     lambda m: CouldNotFetch(m.group(1), m.group(2))),
+                (r"Could not read registers; (.*)$",
+                    lambda m: CouldNotReadRegisters(m.group(1))),
                 (r"Cannot access memory at address (0x[0-9a-f]+)",
                     lambda m: CannotAccess(int(m.group(1), 0))),
                 (r"Cannot insert breakpoint (\d+).",
                     lambda m: CannotInsertBreakpoint(int(m.group(1)))),
+                (r"No registers.",
+                    lambda m: NoRegisters()),
                 (r'No symbol "(\w+)" in current context.',
                     lambda m: NoSymbol(m.group(1))),
                 (r'"([^"]*)"', lambda m: m.group(1)),
@@ -674,7 +690,8 @@ class Gdb:
         self.select_child(h['child'])
         if not h['solo']:
             output = self.command(f"thread {h['thread'].id}", ops=5)
-            assert "Unknown" not in output
+            if "Unknown" in output:
+                raise UnknownThread(output)
 
     def push_state(self):
         self.stack.append({
