@@ -17,6 +17,7 @@ from testlib import assertIn, assertNotIn
 from testlib import assertGreater, assertRegex, assertLess
 from testlib import GdbTest, GdbSingleHartTest, TestFailed
 from testlib import TestNotApplicable, CompileError
+from testlib import UnknownThread
 
 MSTATUS_UIE = 0x00000001
 MSTATUS_SIE = 0x00000002
@@ -1861,18 +1862,18 @@ class CeaseMultiTest(GdbTest):
     def test(self):
         # Run all the way to the infinite loop in exit
         self.gdb.c(wait=False)
-        self.gdb.expect(r"Hart became unavailable.")
+        self.gdb.expect(r"\S+ became unavailable.")
         self.gdb.interrupt()
 
         for hart in self.target.harts:
-            # Try to read the PC on the ceased harts
+            # Try to read misa on the ceased harts
             if hart != self.hart:
-                self.gdb.select_hart(hart)
                 try:
+                    self.gdb.select_hart(hart)
                     self.gdb.p("$misa")
                     assert False, \
                         "Shouldn't be able to access unavailable hart."
-                except (testlib.CouldNotFetch, CouldNotReadRegisters):
+                except UnknownThread:
                     pass
 
         # Check that the main hart can still be debugged.
@@ -1880,10 +1881,12 @@ class CeaseMultiTest(GdbTest):
         main_addr = self.gdb.p("$pc=main")
         self.gdb.stepi()
         # Assume the first instruction of main is not a jump.
-        assertGreater(self.gdb.p("$pc"), main_addr)
-        assertLess(self.gdb.p("$pc"), main_addr + 8)
+        pc = self.gdb.p("$pc")
+        assertGreater(pc, main_addr)
+        assertLess(pc, main_addr + 8)
 
         self.gdb.p("$pc=_start")
+
         self.exit()
 
 class FreeRtosTest(GdbTest):
