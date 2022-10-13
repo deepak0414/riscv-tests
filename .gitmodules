@@ -1,3 +1,4 @@
 [submodule "env"]
 	path = env
-	url = https://github.com/riscv/riscv-test-env.git
+	url = https://github.com/deepak0414/riscv-test-env.git
+	branch = env_cfi
