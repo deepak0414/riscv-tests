@@ -53,6 +53,8 @@
 #define BCFI_MEM_SS_STORE_TEST  6
 #define BCFI_CHECKRA_PASS       7
 #define BCFI_CHECKRA_FAIL       8
+#define BCFI_SSP_READ           9
+#define BCFI_SSP_AMOSWAP        10
 
 #define FCFI_MISSING_LP         20
 #define FCFI_LP_NONALIGNED      21
@@ -252,11 +254,15 @@ RVTEST_CODE_BEGIN
     sscheckra; \
     )
 
-/* TODO: ssprr test to test SSP read is working  */
-/*
-    ssprr x5
-    sspush x5
-*/
+/* ssprr test to test SSP read is working  */
+    TEST_CASE(BCFI_SSP_READ, x6, 0, \
+    li x6, 1; \
+    li x29, POSITIVE_TEST; \
+    ssprr x5; \
+    beqz x5, 1f; \
+    li x6, 0; \
+1:            \
+    )
 
 /* TODO: ssamoswap test to test amoswap on SS is working  */
 /*
@@ -264,6 +270,76 @@ RVTEST_CODE_BEGIN
     ssamoswap x3, x1, x0
 */
 
+#define LOWER_LABEL 123
+#define MID_LABEL 124
+#define UP_LEVEL 125
+
+/* Missing a landing pad, must fault  */
+    TEST_CASE(FCFI_MISSING_LP, x28, CAUSE_ILLEGAL_INSTRUCTION, \
+    la x6, indirect_landing_pad_1; \
+    li x28, 0; \
+    li x29, NEGATIVE_TEST; \
+    lpsll LOWER_LABEL; \
+    jalr x7,x6; \
+indirect_landing_pad_1: \
+/* nop should fault but filter trap handler should advance epc and `lpcll` should succeed */
+    nop; \
+    lpcll LOWER_LABEL; \
+    )
+
+/* Check lower label, positive test  */
+    TEST_CASE(FCFI_LPLL_CHECK_PASS, x28, 0, \
+    la x6, indirect_landing_pad_2; \
+    li x28, 0; \
+    li x29, POSITIVE_TEST; \
+    lpsll LOWER_LABEL; \
+    jalr x7,x6; \
+indirect_landing_pad_2: \
+    lpcll LOWER_LABEL; \
+    )
+
+/* Check lower label, negative test  */
+    TEST_CASE(FCFI_LPLL_CHECK_FAIL, x28, CAUSE_ILLEGAL_INSTRUCTION, \
+    la x6, indirect_landing_pad_3; \
+    li x28, 0; \
+    li x29, NEGATIVE_TEST; \
+    lpsll LOWER_LABEL; \
+    jalr x7,x6; \
+indirect_landing_pad_3: \
+    lpcll 0; \
+    )
+
+/* Check mid label, positive test  */
+    TEST_CASE(FCFI_LPML_CHECK_PASS, x28, 0, \
+    li x28, 0; \
+    li x29, POSITIVE_TEST; \
+    lpsml MID_LABEL; \
+    lpcml MID_LABEL; \
+    )
+
+/* Check mid label, negative test  */
+    TEST_CASE(FCFI_LPML_CHECK_FAIL, x28, CAUSE_ILLEGAL_INSTRUCTION, \
+    li x28, 0; \
+    li x29, NEGATIVE_TEST; \
+    lpsml MID_LABEL; \
+    lpcml 0; \
+    )
+
+/* Check up label, positive test  */
+    TEST_CASE(FCFI_LPUL_CHECK_PASS, x28, 0, \
+    li x28, 0; \
+    li x29, POSITIVE_TEST; \
+    lpsul 125; \
+    lpcul 125; \
+    )
+
+/* Check up label, negative test  */
+    TEST_CASE(FCFI_LPUL_CHECK_FAIL, x28, CAUSE_ILLEGAL_INSTRUCTION, \
+    li x28, 0; \
+    li x29, NEGATIVE_TEST; \
+    lpsul 125; \
+    lpcul 0; \
+    )
 /* all tests passed */
 pass:
     j pass;
@@ -273,32 +349,6 @@ fail:
 /* special marker to end the run */
     li x30, 0xbaddea1;
     scall;
-
-
-/* indirect call/jmp along with label check tests */
-
-#define LOWER_LABEL 123
-#define MID_LABEL 123
-#define UP_LEVEL 123
-
-    la x6, indirect_landing_pad
-    lpsll 123
-    lpsml 124
-    lpsul 125
-
-    jalr x7, x6
-    ssprr x1
-    ssprr x1
-    ssprr x1
-indirect_landing_pad:
-    //ssprr x1
-    lpcll 123
-    lpcml 124
-    lpcul 125
-
-
-    1:
-    j 1b
 
 RVTEST_CODE_END
 
