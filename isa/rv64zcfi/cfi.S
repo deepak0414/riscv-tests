@@ -265,10 +265,19 @@ RVTEST_CODE_BEGIN
     )
 
 /* TODO: ssamoswap test to test amoswap on SS is working  */
-/*
-    ssprr x1
-    ssamoswap x3, x1, x0
-*/
+    TEST_CASE(BCFI_SSP_AMOSWAP, x6, 1, \
+    li x6, 0; \
+    li x29, POSITIVE_TEST; \
+    ssprr x5; \
+    move x7, x5 ;\
+    beqz x5, 1f; \
+    sspush x5; \
+    ssprr x5; \
+    ssamoswap x5, x5, x0; \
+    bne x5, x7, 1f; \
+    li x6, 1; \
+1:            \
+    )
 
 #define LOWER_LABEL 123
 #define MID_LABEL 124
