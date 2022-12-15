@@ -46,15 +46,15 @@
 #define RS2_SHIFT 20
 #define RD_SHIFT 7
 
-#define BCFI_SSMEM_LOAD_TEST    1
-#define BCFI_SSMEM_STORE_TEST   2
-#define BCFI_SSMEM_SS_OP_TEST   3
-#define BCFI_MEM_SS_LOAD_TEST   5
-#define BCFI_MEM_SS_STORE_TEST  6
-#define BCFI_CHECKRA_PASS       7
-#define BCFI_CHECKRA_FAIL       8
-#define BCFI_SSP_READ           9
-#define BCFI_SSP_AMOSWAP        10
+#define BCFI_SSMEM_LOAD_TEST     1
+#define BCFI_SSMEM_STORE_TEST    2
+#define BCFI_SSMEM_SS_OP_TEST    3
+#define BCFI_RWMEM_SS_LOAD_TEST  5
+#define BCFI_RWMEM_SS_STORE_TEST 6
+#define BCFI_CHECKRA_PASS        7
+#define BCFI_CHECKRA_FAIL        8
+#define BCFI_SSP_READ            9
+#define BCFI_SSP_AMOSWAP         10
 
 #define FCFI_MISSING_LP         20
 #define FCFI_LP_NONALIGNED      21
@@ -279,6 +279,28 @@ RVTEST_CODE_BEGIN
 1:            \
     )
 
+/* regular memory but ss load. must raise load_access_fault */
+    TEST_CASE(BCFI_RWMEM_SS_LOAD_TEST, x28, CAUSE_LOAD_ACCESS, \
+    li x29, NEGATIVE_TEST; \
+    ssprr x1; \
+    la x2, data_stack_start + 8; \
+    ld x7, 0(x2); \
+    csrw CSR_SSP, x2; \
+    sspop x1; \
+    csrw CSR_SSP, x1; \
+    )
+
+/* regular memory but ss store. must raise store_access_fault */
+    TEST_CASE(BCFI_RWMEM_SS_STORE_TEST, x28, CAUSE_STORE_ACCESS, \
+    li x29, NEGATIVE_TEST; \
+    ssprr x1; \
+    la x2, data_stack_start + 8; \
+    ld x7, 0(x2); \
+    csrw CSR_SSP, x2; \
+    sspush x1; \
+    csrw CSR_SSP, x1; \
+    )
+
 #define LOWER_LABEL 123
 #define MID_LABEL 124
 #define UP_LEVEL 125
@@ -363,6 +385,13 @@ RVTEST_CODE_END
 
 .data
 RVTEST_DATA_BEGIN
+
+.balign PGSIZE
+.global data_stack_start
+data_stack_start:
+    .fill 512, 8, 0
+.global data_stack_end
+data_stack_end:
 
 .balign PGSIZE
 .global shadow_stack_page_start
