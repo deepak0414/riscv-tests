@@ -209,7 +209,6 @@ RVTEST_CODE_BEGIN
 /*
 * CFI tests
 * x29 contains whether a negative test or positive test
-* 1 is positive test. 0 is negative test
 * If test resulted in fault, x28 will contain cause (via trap filter)
 */
 
