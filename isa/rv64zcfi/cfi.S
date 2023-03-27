@@ -24,10 +24,9 @@
 
 #define REG_NUM(reg) (0##reg - 0)
 
-#define SS_PUSH_MASK 0b10000001110000000100000001110011
+#define SS_PUSH_MASK 0b10001010000000000100000001110011
 #define SS_POP_MASK  0b10000001110000000100000001110011 
-#define SS_READ      0b10000001110100000100000001110011 
-#define SS_CHECKRA   0b10001010000100101100000001110011
+#define SS_PRR       0b10000110000000000100000001110011
 #define SS_AMOSWAP   0b10000010000000000100000001110011
 
 #define LP_S_LL_MASK 0b10000010000000000100000001110011
@@ -36,8 +35,8 @@
 #define LP_S_ML_MASK 0b10000110000000000100000001110011
 #define LP_C_ML_MASK 0b10000110100000000100000001110011
 
-#define LP_S_UL_MASK 0b10001011000000000100000001110011
-#define LP_C_UL_MASK 0b10001011100000000100000001110011
+#define LP_S_UL_MASK 0b10000111000000000100000001110011
+#define LP_C_UL_MASK 0b10000111100000000100000001110011
 
 #define LOWER_LABEL_MASK ((1<<9)-1)
 #define LABEL_MASK       ((1<<8)-1)
@@ -64,6 +63,9 @@
 #define FCFI_LPML_CHECK_FAIL    25
 #define FCFI_LPUL_CHECK_PASS    26
 #define FCFI_LPUL_CHECK_FAIL    27
+#define FCFI_LPLL_C_JR_CHECK_PASS   28
+#define FCFI_LPLL_C_JALR_CHECK_PASS 29
+#define FCFI_LPLL_ALIGN_FAIL        30
 
 /* Magic markers for negative and positive test */
 #define NEGATIVE_TEST           0xCF11
@@ -71,7 +73,7 @@
 
 /* sspush only allows rs1 as x1 and x5. Below macro doesn't care about that */
 .macro sspush regname
-    .word SS_PUSH_MASK | (REG_NUM(\regname)) << RS1_SHIFT
+    .word SS_PUSH_MASK | (REG_NUM(\regname)) << RS2_SHIFT
 .endm
 
 /* sspop only allowed rd as x1 and x5. Below macro doesn't care about that */
@@ -79,14 +81,14 @@
     .word SS_POP_MASK | (REG_NUM(\regname)) << RD_SHIFT
 .endm
 
-/* ssprr can read current ssp in any register */
-.macro ssprr regname
-    .word SS_READ | (REG_NUM(\regname)) << RD_SHIFT
+/* sspopchk rd is x0, rs1 needs to be x1 or x5 */
+.macro sspopchk regname
+    .word SS_POP_MASK | (REG_NUM(\regname)) << RS1_SHIFT
 .endm
 
-/* sscheckra */
-.macro sscheckra
-    .word SS_CHECKRA
+/* ssprr can read current ssp in any register */
+.macro ssprr regname
+    .word SS_PRR | (REG_NUM(\regname)) << RD_SHIFT
 .endm
 
 .macro ssamoswap dest, rs1, rs2
@@ -126,23 +128,24 @@
 #undef EXTRA_INIT
 #define EXTRA_INIT                                                      \
     csrr t1, CSR_MENVCFG;                                               \
-    li t0, MENVCFG_CFI;                                                 \
+    li t0, MENVCFG_CFIE;                                                \
     or t0, t0, t1;                                                      \
     csrw CSR_MENVCFG, t0;                                               \
     csrr t1, CSR_MSTATUS;                                               \
-    li t0, (MSTATUS_UFCFIEN |  MSTATUS_UBCFIEN);                        \
+    li t0, (MSTATUS_UFCFIE | MSTATUS_UBCFIE);                           \
     or t0, t0, t1;                                                      \
     csrw CSR_MSTATUS, t0;                                               \
-    la t0, shadow_stack_page_end - DRAM_BASE;                           \
+    la t0, shadow_stack_pages_end - DRAM_BASE;                          \
     csrw CSR_SSP, t0;
 
+/* kernel is mapped to uppermost megapage, see env/v/vm.c */
 #define KERNEL_BASE 0xffffffffffe00000
 #undef FILTER_PAGE_FAULT
 #define FILTER_PAGE_FAULT                                               \
     move t2, a0;                                                        \
     li a0, 0;                                                           \
-    la t0, shadow_stack_page_start - KERNEL_BASE;                       \
-    la t1, shadow_stack_page_end - KERNEL_BASE;                         \
+    la t0, shadow_stack_pages_start - KERNEL_BASE;                      \
+    la t1, shadow_stack_pages_end - KERNEL_BASE;                        \
     bltu t2, t0, 1f;                                                    \
     bgtu t2, t1, 1f;                                                    \
     li t0, (PTE_V | PTE_U | PTE_W);                                     \
@@ -160,13 +163,15 @@
 *
 * Trap filter will get called for all other traps too. We need to narrow down filter
 * as much as possible. Only need to do filtering for two causes
-*   - CAUSE_ILLEGAL_INSTRUCTION (tests of sscheckra, lpcll, lpcml, lpcul)
+*   - CAUSE_ILLEGAL_INSTRUCTION (tests of sspopchk, lpcll, lpcml, lpcul)
 *   - CAUSE_STORE_ACCESS (regular store to SS memory or sspush on regular memory)
 *   - CAUSE_LOAD_ACCESS (sspop on regular memory)
 *   - CAUSE_USER_ECALL
 *       - Further check if x30 contains 0xbaddea1 that means one of the test went bad
 *         In this case, just stop everything
 * If trap is due to test case then copy cause code into x28, do epc += 4 and resume
+*
+* Clear SPELP since otherwise ELP can stay set and continue blowing up on resume (a failed lpcll doesn't clear it).
 *
 * Trap handler gets pointer to trap frame (in a0)
 */
@@ -201,6 +206,10 @@ check_neg_test:                                                         \
 term_test:                                                              \
     li a0, 1;                                                           \
 no_filter:                                                              \
+    csrr t0, CSR_SSTATUS;                                               \
+    li t1, ~SSTATUS_SPELP;                                              \
+    and t0, t0, t1; \
+    csrw CSR_SSTATUS, t0;                                               \
     ret;
 
 RVTEST_RV64U
@@ -215,7 +224,7 @@ RVTEST_CODE_BEGIN
 /* regular load on ss memory. must succeed */
     TEST_CASE(BCFI_SSMEM_LOAD_TEST, x6, 0, \
     li x29, POSITIVE_TEST; \
-    la x6, shadow_stack_page_end - 8;  \
+    la x6, shadow_stack_pages_end - 8;  \
     ld x6, 0(x6); \
     )
 
@@ -223,9 +232,11 @@ RVTEST_CODE_BEGIN
     TEST_CASE(BCFI_SSMEM_STORE_TEST, x28, CAUSE_STORE_ACCESS, \
     li x28, 0; \
     li x29, NEGATIVE_TEST; \
-    la x6, shadow_stack_page_end - 8;  \
+    la x6, shadow_stack_pages_end - 8;  \
     sd x6, 0(x6); \
     )
+
+/* TODO: jump to shadow stack page; need fault cleanup */
 
 /* ss load/store on ss memory. must not fault/trap */
     TEST_CASE(BCFI_SSMEM_SS_OP_TEST, x5, 0xdeadbeef, \
@@ -235,48 +246,69 @@ RVTEST_CODE_BEGIN
     sspop x5; \
     )
 
-/* sscheckra mustn't fault  */
+/* sspopchk mustn't fault  */
     TEST_CASE(BCFI_CHECKRA_PASS, x28, 0, \
     li x28, 0; \
     li x29, POSITIVE_TEST; \
     li x1, 0xdeadbeef; \
     li x5, 0xdeadbeef; \
-    sscheckra; \
+    sspush x5; \
+    sspopchk x1; \
     )
 
-/* sscheckra must fault  */
+/* sspopchk must fault  */
     TEST_CASE(BCFI_CHECKRA_FAIL, x28, CAUSE_ILLEGAL_INSTRUCTION, \
     li x28, 0; \
     li x29, NEGATIVE_TEST; \
     li x1, 0xdeadbeef; \
     li x5, 0xbeefdead; \
-    sscheckra; \
+    sspush x1; \
+    sspopchk x5; \
     )
 
 /* ssprr test to test SSP read is working  */
     TEST_CASE(BCFI_SSP_READ, x6, 0, \
     li x6, 1; \
     li x29, POSITIVE_TEST; \
+    la x7, shadow_stack_pages_end - 8;  \
     ssprr x5; \
-    beqz x5, 1f; \
+    bne x5, x7, 1f; \
+    sspop x5; \
     li x6, 0; \
 1:            \
     )
 
-/* TODO: ssamoswap test to test amoswap on SS is working  */
-    TEST_CASE(BCFI_SSP_AMOSWAP, x6, 1, \
-    li x6, 0; \
+/* ssamoswap test to test amoswap on SS is working
+   - do a `save_shadow_stack_pointer` to the upper page, keep the ptr in x7
+   - set SSP to the lower stack page and do a `save_shadow_stack_pointer`, keep ptr in x8
+   - do a `restore_shadow_stack_pointer` back to the upper page after checking the swap result
+   */
+    TEST_CASE(BCFI_SSP_AMOSWAP, x6, 0, \
+    li x6, 1; \
     li x29, POSITIVE_TEST; \
     ssprr x5; \
-    move x7, x5 ;\
-    beqz x5, 1f; \
     sspush x5; \
-    ssprr x5; \
-    ssamoswap x5, x5, x0; \
+    addi x7, x5, -8; \
+    la x5, shadow_stack_second_page_start;  \
+    csrw CSR_SSP, x5; \
+    sspush x5; \
+    addi x8, x5, -8; \
+    ssamoswap x5, x7, x0; \
+    addi x7, x7, 8; \
     bne x5, x7, 1f; \
-    li x6, 1; \
+    /* TODO: check more */ \
+    csrw CSR_SSP, x5; \
+    li x6, 0; \
 1:            \
     )
+
+#if 0
+    move x7, x5 ;\
+    beqz x5, 1f; \
+    ssprr x5; \
+    beq x5, x7, 1f; \
+    li x6, 1;
+#endif
 
 /* regular memory but ss load. must raise load_access_fault */
     TEST_CASE(BCFI_RWMEM_SS_LOAD_TEST, x28, CAUSE_LOAD_ACCESS, \
@@ -312,20 +344,70 @@ RVTEST_CODE_BEGIN
     lpsll LOWER_LABEL; \
     jalr x7,x6; \
 indirect_landing_pad_1: \
-/* nop should fault but filter trap handler should advance epc and `lpcll` should succeed */
+/* nop should fault but filter trap handler will clear ELP and step over the nop */
     nop; \
-    lpcll LOWER_LABEL; \
     )
 
-/* Check lower label, positive test  */
+/* Check lower label after jalr, positive test; also test that setting LL clears ML and UL  */
     TEST_CASE(FCFI_LPLL_CHECK_PASS, x28, 0, \
     la x6, indirect_landing_pad_2; \
     li x28, 0; \
     li x29, POSITIVE_TEST; \
+    lpsml MID_LABEL; \
+    lpsul UP_LEVEL; \
     lpsll LOWER_LABEL; \
     jalr x7,x6; \
 indirect_landing_pad_2: \
     lpcll LOWER_LABEL; \
+    lpcml 0; \
+    lpcul 0; \
+    )
+
+/* Check lower label after c.jr, positive test;   */
+    TEST_CASE(FCFI_LPLL_C_JR_CHECK_PASS, x28, 0, \
+    la x6, indirect_landing_pad_2a; \
+    li x28, 0; \
+    li x29, POSITIVE_TEST; \
+    lpsll LOWER_LABEL; \
+    .option push; \
+    .option rvc; \
+    c.jr x6; \
+    nop; \
+    .option pop; \
+indirect_landing_pad_2a: \
+    lpcll LOWER_LABEL; \
+    )
+
+/* Check lower label after c.jalr, positive test;   */
+    TEST_CASE(FCFI_LPLL_C_JALR_CHECK_PASS, x28, 0, \
+    la x6, indirect_landing_pad_2b; \
+    li x28, 0; \
+    li x29, POSITIVE_TEST; \
+    lpsll LOWER_LABEL; \
+    .option push; \
+    .option rvc; \
+    c.jalr x6; \
+    nop; \
+    .option pop; \
+indirect_landing_pad_2b: \
+    lpcll LOWER_LABEL; \
+    )
+
+/* TODO: check ELP set by c.jr and c.jalr when it should be */
+
+/* Check lower label after c.jr, bad alignment of lpcll, negative test;   */
+    TEST_CASE(FCFI_LPLL_ALIGN_FAIL, x28, CAUSE_ILLEGAL_INSTRUCTION, \
+    la x6, indirect_landing_pad_2c; \
+    li x28, 0; \
+    li x29, NEGATIVE_TEST; \
+    lpsll LOWER_LABEL; \
+    .option push; \
+    .option rvc; \
+    c.jr x6; \
+indirect_landing_pad_2c: \
+    lpcll LOWER_LABEL; \
+    nop; \
+    .option pop; \
     )
 
 /* Check lower label, negative test  */
@@ -359,27 +441,29 @@ indirect_landing_pad_3: \
     TEST_CASE(FCFI_LPUL_CHECK_PASS, x28, 0, \
     li x28, 0; \
     li x29, POSITIVE_TEST; \
-    lpsul 125; \
-    lpcul 125; \
+    lpsul UP_LEVEL; \
+    lpcul UP_LEVEL; \
     )
 
 /* Check up label, negative test  */
     TEST_CASE(FCFI_LPUL_CHECK_FAIL, x28, CAUSE_ILLEGAL_INSTRUCTION, \
     li x28, 0; \
     li x29, NEGATIVE_TEST; \
-    lpsul 125; \
+    lpsul UP_LEVEL; \
     lpcul 0; \
     )
+
+/* FIXME: other jump/call instruction cases */
+
 /* all tests passed */
-pass:
-    j pass;
+    RVTEST_PASS
 
 /* TESTNUM (gp) holds test number. */
 fail:
 /* special marker to end the run */
     li x30, 0xbaddea1;
     scall;
-
+out:
 RVTEST_CODE_END
 
 .data
@@ -393,9 +477,11 @@ data_stack_start:
 data_stack_end:
 
 .balign PGSIZE
-.global shadow_stack_page_start
-shadow_stack_page_start:
+.global shadow_stack_pages_start
+shadow_stack_pages_start:
     .fill 512, 8, -1
-.global shadow_stack_page_end
-shadow_stack_page_end:
+shadow_stack_second_page_start:
+    .fill 512, 8, -1
+.global shadow_stack_pages_end
+shadow_stack_pages_end:
 RVTEST_DATA_END
