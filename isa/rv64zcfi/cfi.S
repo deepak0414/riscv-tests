@@ -54,6 +54,11 @@
 #define BCFI_CHECKRA_FAIL        8
 #define BCFI_SSP_READ            9
 #define BCFI_SSP_AMOSWAP         10
+#define BCFI_SSLOAD_ALIGN_FAIL   11
+#define BCFI_SSSTORE_ALIGN_FAIL  12
+#define BCFI_SSAMO_ALIGN_FAIL    13
+#define BCFI_LOAD_ALIGN_FAIL     14
+#define BCFI_STORE_ALIGN_FAIL    15
 
 #define FCFI_MISSING_LP         20
 #define FCFI_LP_NONALIGNED      21
@@ -309,6 +314,50 @@ RVTEST_CODE_BEGIN
     beq x5, x7, 1f; \
     li x6, 1;
 #endif
+
+/* misaligned ss load must trigger access fault  */
+    TEST_CASE(BCFI_SSLOAD_ALIGN_FAIL, x28, CAUSE_LOAD_ACCESS, \
+    li x28, 0; \
+    li x29, NEGATIVE_TEST; \
+    la t0, shadow_stack_pages_end - DRAM_BASE; \
+    addi t0, t0, -15; \
+    csrw CSR_SSP, t0;
+    sspop x1; \
+    )
+
+/* misaligned ss store must trigger access fault (SSP from prev test) */
+    TEST_CASE(BCFI_SSSTORE_ALIGN_FAIL, x28, CAUSE_STORE_ACCESS, \
+    li x28, 0; \
+    li x29, NEGATIVE_TEST; \
+    sspush x1; \
+    la t0, shadow_stack_pages_end - DRAM_BASE; \
+    csrw CSR_SSP, t0;
+    )
+
+/* misaligned ss store must trigger access fault (SSP from prev test) */
+    TEST_CASE(BCFI_SSAMO_ALIGN_FAIL, x28, CAUSE_STORE_ACCESS, \
+    li x28, 0; \
+    li x29, NEGATIVE_TEST; \
+    la t0, shadow_stack_pages_end - DRAM_BASE; \
+    addi t0, t0, -15; \
+    ssamoswap x1, x7, x0; \
+    )
+
+/* regular misaligned load on ss memory. must do load_access_fault */
+    TEST_CASE(BCFI_LOAD_ALIGN_FAIL, x28, CAUSE_LOAD_ACCESS, \
+    li x28, 0; \
+    li x29, NEGATIVE_TEST; \
+    la x6, shadow_stack_pages_end - 9;  \
+    ld x6, 0(x6); \
+    )
+
+/* regular misaligned store on ss memory. must do store_access_fault */
+    TEST_CASE(BCFI_STORE_ALIGN_FAIL, x28, CAUSE_STORE_ACCESS, \
+    li x28, 0; \
+    li x29, NEGATIVE_TEST; \
+    la x6, shadow_stack_pages_end - 9;  \
+    sd x6, 0(x6); \
+    )
 
 /* regular memory but ss load. must raise load_access_fault */
     TEST_CASE(BCFI_RWMEM_SS_LOAD_TEST, x28, CAUSE_LOAD_ACCESS, \
