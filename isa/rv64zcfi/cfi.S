@@ -50,15 +50,17 @@
 #define BCFI_SSMEM_SS_OP_TEST    3
 #define BCFI_RWMEM_SS_LOAD_TEST  5
 #define BCFI_RWMEM_SS_STORE_TEST 6
-#define BCFI_CHECKRA_PASS        7
-#define BCFI_CHECKRA_FAIL        8
-#define BCFI_SSP_READ            9
-#define BCFI_SSP_AMOSWAP         10
-#define BCFI_SSLOAD_ALIGN_FAIL   11
-#define BCFI_SSSTORE_ALIGN_FAIL  12
-#define BCFI_SSAMO_ALIGN_FAIL    13
-#define BCFI_LOAD_ALIGN_FAIL     14
-#define BCFI_STORE_ALIGN_FAIL    15
+#define BCFI_ROMEM_SS_LOAD_TEST  7
+#define BCFI_ROMEM_SS_STORE_TEST 8
+#define BCFI_CHECKRA_PASS        9
+#define BCFI_CHECKRA_FAIL        10
+#define BCFI_SSP_READ            11
+#define BCFI_SSP_AMOSWAP         12
+#define BCFI_SSLOAD_ALIGN_FAIL   13
+#define BCFI_SSSTORE_ALIGN_FAIL  14
+#define BCFI_SSAMO_ALIGN_FAIL    15
+#define BCFI_LOAD_ALIGN_FAIL     16
+#define BCFI_STORE_ALIGN_FAIL    17
 
 #define FCFI_MISSING_LP         20
 #define FCFI_LP_NONALIGNED      21
@@ -158,7 +160,18 @@
     li t0, 0;                                                           \
     sw t0, (a2);                                                        \
     li a0, 1;                                                           \
+    j 2f;                                                               \
 1:                                                                      \
+    la t0, data_readonly_start - KERNEL_BASE;                           \
+    la t1, data_readonly_end - KERNEL_BASE;                             \
+    bltu t2, t0, 2f;                                                    \
+    bgtu t2, t1, 2f;                                                    \
+    li t0, (PTE_V | PTE_U | PTE_R);                                     \
+    sd t0, (a1);                                                        \
+    li t0, 0;                                                           \
+    sw t0, (a2);                                                        \
+    li a0, 1;                                                           \
+2:                                                                      \
     ret;
 
 /*
@@ -381,6 +394,28 @@ RVTEST_CODE_BEGIN
     csrw CSR_SSP, x1; \
     )
 
+/* regular memory but ss load. must raise load_access_fault */
+    TEST_CASE(BCFI_ROMEM_SS_LOAD_TEST, x28, CAUSE_LOAD_ACCESS, \
+    li x29, NEGATIVE_TEST; \
+    ssprr x1; \
+    la x2, data_readonly_start + 8; \
+    ld x7, 0(x2); \
+    csrw CSR_SSP, x2; \
+    sspop x1; \
+    csrw CSR_SSP, x1; \
+    )
+
+/* regular memory but ss store. must raise store_access_fault */
+    TEST_CASE(BCFI_ROMEM_SS_STORE_TEST, x28, CAUSE_STORE_ACCESS, \
+    li x29, NEGATIVE_TEST; \
+    ssprr x1; \
+    la x2, data_readonly_start + 8; \
+    ld x7, 0(x2); \
+    csrw CSR_SSP, x2; \
+    sspush x1; \
+    csrw CSR_SSP, x1; \
+    )
+
 #define LOWER_LABEL 123
 #define MID_LABEL 124
 #define UP_LEVEL 125
@@ -393,7 +428,7 @@ RVTEST_CODE_BEGIN
     lpsll LOWER_LABEL; \
     jalr x7,x6; \
 indirect_landing_pad_1: \
-/* nop should fault but filter trap handler will clear ELP and step over the nop */
+/* nop should fault but filter trap handler should advance epc and `lpcll` should succeed */
     nop; \
     )
 
@@ -524,6 +559,13 @@ data_stack_start:
     .fill 512, 8, 0
 .global data_stack_end
 data_stack_end:
+
+.balign PGSIZE
+.global data_readonly_start
+data_readonly_start:
+    .fill 512, 8, 0
+.global data_readonly_end
+data_readonly_end:
 
 .balign PGSIZE
 .global shadow_stack_pages_start
